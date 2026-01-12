@@ -1,0 +1,3 @@
+Conversación telefónica en español entre un agente de Movistar Perú y un cliente.
+Incluye puntuación correcta: comas, puntos y signos de interrogación.
+Temas comunes: facturación, soporte técnico, problemas de señal, pagos, contratos, DNI, números de teléfono.

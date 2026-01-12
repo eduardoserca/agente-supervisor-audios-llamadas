@@ -1,0 +1,40 @@
+# Audio Processing
+pydub==0.25.1
+librosa==0.10.1
+soundfile==0.12.1
+scipy==1.11.4
+
+# Speech Recognition & Transcription
+openai-whisper==20231117
+torch==2.2.0
+torchaudio==2.2.0
+
+# Speaker Diarization
+pyannote.audio==3.1.1
+torchvision==0.17.0
+
+# AI & Language Models
+openai<2.0.0
+
+langchain==0.1.0
+langchain-openai==0.0.2
+
+# Data Processing
+# Data Processing
+pandas==2.1.4
+numpy<2.0.0
+
+
+# Visualization
+matplotlib==3.8.2
+seaborn==0.13.0
+plotly==5.18.0
+
+# Jupyter
+jupyter==1.0.0
+notebook==7.0.6
+ipywidgets==8.1.1
+
+# Utilities
+python-dotenv==1.0.0
+tqdm==4.66.1

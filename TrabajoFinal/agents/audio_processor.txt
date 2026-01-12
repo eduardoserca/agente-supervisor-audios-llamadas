@@ -1,0 +1,376 @@
+"""
+Módulo de procesamiento de audio
+Incluye funciones para preprocesar audios antes de la transcripción
+"""
+import numpy as np
+from pydub import AudioSegment , effects
+from pydub.silence import detect_nonsilent
+import librosa
+import soundfile as sf
+from pathlib import Path
+from typing import Tuple, List
+import config
+from scipy.io import wavfile
+from scipy import signal
+from pydub.effects import normalize, compress_dynamic_range
+import io
+from scipy.ndimage import binary_closing, binary_dilation
+import logging
+
+
+
+class AudioProcessor:
+    """Procesador de audio para limpieza y preparación"""
+    
+    def __init__(self, sample_rate: int = config.SAMPLE_RATE):
+        self.sample_rate = sample_rate
+        
+    def load_audio(self, audio_path: str) -> AudioSegment:
+        """
+        Carga un archivo de audio en formato AudioSegment
+        
+        Args:
+            audio_path: Ruta al archivo de audio
+            
+        Returns:
+            AudioSegment con el audio cargado
+        """
+        # Convertir a Path para manejar correctamente rutas con espacios en Windows
+        audio_path = Path(audio_path)
+        if not audio_path.exists():
+            raise FileNotFoundError(f"No se encontró el archivo de audio: {audio_path}")
+        
+        # Para archivos WAV, usar soundfile que no requiere ffmpeg y soporta MULAW
+        # Para archivos WAV, intentar primero con soundfile (más rápido, soporta MULAW)
+        if audio_path.suffix.lower() == '.wav':
+            try:
+                # Leer archivo WAV con soundfile
+                audio_data, sample_rate = sf.read(str(audio_path), dtype='int16')
+                
+                # Si es estéreo, convertir a mono
+                if len(audio_data.shape) > 1:
+                    audio_data = audio_data.mean(axis=1).astype(np.int16)
+                
+                # Crear AudioSegment desde raw data
+                audio = AudioSegment(
+                    audio_data.tobytes(),
+                    frame_rate=sample_rate,
+                    sample_width=2,  # 16-bit = 2 bytes
+                    channels=1
+                )
+                
+                print(f"Audio cargado (soundfile): {len(audio)/1000:.1f}s, {sample_rate}Hz")
+                
+            except Exception as e:
+                # No es un error crítico, solo un formato que soundfile no maneja
+                # print(f"Info: soundfile no pudo leer el archivo ({e}), intentando con scipy...")
+                try:
+                    # Fallback 1: scipy.io.wavfile (no requiere ffmpeg)
+                    sample_rate, audio_data = wavfile.read(str(audio_path))
+                    
+                    # Si es estéreo, convertir a mono
+                    if len(audio_data.shape) > 1:
+                        audio_data = audio_data.mean(axis=1).astype(np.int16)
+                    elif audio_data.dtype != np.int16:
+                        # Convertir a int16 si es necesario
+                        if audio_data.dtype == np.float32:
+                            audio_data = (audio_data * 32767).astype(np.int16)
+                        else:
+                            audio_data = audio_data.astype(np.int16)
+
+                    audio = AudioSegment(
+                        audio_data.tobytes(),
+                        frame_rate=sample_rate,
+                        sample_width=2,
+                        channels=1
+                    )
+                    print(f"Audio cargado (scipy): {len(audio)/1000:.1f}s, {sample_rate}Hz")
+                    
+                except Exception as e2:
+                    # print(f"Info: scipy no pudo leer el archivo ({e2}), intentando con pydub...")
+                    try:
+                        # Fallback 2: intentar con pydub (usa ffmpeg/avconv, más robusto)
+                        audio = AudioSegment.from_file(str(audio_path))
+                        print(f"Audio cargado (pydub): {len(audio)/1000:.1f}s, {audio.frame_rate}Hz")
+                    except Exception as e3:
+                        print(f"Error fatal al cargar WAV: {e3}")
+                        raise e
+        else:
+            # Para otros formatos, intentar con pydub (requiere ffmpeg)
+            audio = AudioSegment.from_file(str(audio_path))
+        
+        # Convertir a mono si es estéreo (por si acaso)
+        if audio.channels > 1:
+            audio = audio.set_channels(1)
+        
+        return audio
+
+    def detect_hold_tones(self, audio: AudioSegment) -> List[Tuple[float, float]]:
+        SR = audio.frame_rate
+        HOP_LENGTH = 512
+        DURATION_THRESHOLD = 5.0 # La música debe durar al menos 5s
+        
+        samples = np.array(audio.get_array_of_samples()).astype(np.float32)
+        if len(samples) == 0: return []
+        samples /= (np.max(np.abs(samples)) + 1e-6)
+
+        zcr = librosa.feature.zero_crossing_rate(y=samples, hop_length=HOP_LENGTH)[0]
+        flatness = librosa.feature.spectral_flatness(y=samples, hop_length=HOP_LENGTH)[0]
+        rms = librosa.feature.rms(y=samples, hop_length=HOP_LENGTH)[0]
+        rms_norm = rms / (np.max(rms) + 1e-6)
+
+        # Criterio estricto de música (tonos puros y estables)
+        is_hold = (zcr < 0.07) & (flatness < 0.03) & (rms_norm > 0.15)
+
+        # --- NUEVA PROTECCIÓN DE BIENVENIDA ---
+        # Forzamos que los primeros 4 segundos NUNCA se marquen como música
+        safe_zone_frames = int(4.0 * SR / HOP_LENGTH)
+        is_hold[:safe_zone_frames] = False
+
+        gap_frames = int(1.5 * SR / HOP_LENGTH)
+        refined_mask = binary_closing(is_hold, structure=np.ones(gap_frames))
+        refined_mask = binary_dilation(refined_mask, structure=np.ones(int(0.5 * SR / HOP_LENGTH)), iterations=-1)
+
+        times = librosa.frames_to_time(np.arange(len(refined_mask)), sr=SR, hop_length=HOP_LENGTH)
+        segments = []
+        in_segment = False
+        start_time = 0
+        
+        for i, active in enumerate(refined_mask):
+            if active and not in_segment:
+                start_time = times[i]
+                in_segment = True
+            elif not active and in_segment:
+                end_time = times[i]
+                if end_time - start_time >= DURATION_THRESHOLD:
+                    # Dejamos 1 segundo extra de margen al final del segmento
+                    # para asegurar que no se corte el primer "Hola"
+                    segments.append((start_time, max(start_time, end_time - 1.0)))
+                in_segment = False
+                
+        return segments
+
+    def remove_hold_tones(self, audio: AudioSegment) -> Tuple[AudioSegment, List[Tuple[float, float]]]:
+        # 1. Obtenemos los segmentos de TONOS (lo que queremos quitar)
+        hold_tone_segments = self.detect_hold_tones(audio)
+        
+        if not hold_tone_segments:
+            return audio, []
+
+        # 2. Reconstrucción: Solo conservamos lo que NO está en hold_tone_segments
+        cleaned_audio = AudioSegment.empty()
+        current_pos_ms = 0
+        total_duration_ms = len(audio)
+        
+        # Ordenamos por si acaso para evitar saltos temporales
+        hold_tone_segments.sort()
+
+        for start_sec, end_sec in hold_tone_segments:
+            start_ms = int(start_sec * 1000)
+            end_ms = int(end_sec * 1000)
+
+            # Si hay espacio entre el final del último tono y el inicio de este, es VOZ
+            if start_ms > current_pos_ms:
+                # Extraemos la voz
+                voice_segment = audio[current_pos_ms:start_ms]
+                
+                # Unimos con un pequeño crossfade si ya hay audio previo
+                if len(cleaned_audio) > 0:
+                    cleaned_audio = cleaned_audio.append(voice_segment, crossfade=50)
+                else:
+                    cleaned_audio = voice_segment
+            
+            # Saltamos el tono
+            current_pos_ms = end_ms
+
+        # 3. No olvides el trozo de audio después del último tono detectado
+        if current_pos_ms < total_duration_ms:
+            remaining_voice = audio[current_pos_ms:]
+            if len(cleaned_audio) > 0:
+                cleaned_audio = cleaned_audio.append(remaining_voice, crossfade=50)
+            else:
+                cleaned_audio = remaining_voice
+
+        return cleaned_audio, hold_tone_segments
+
+    def apply_bandpass_filter(self, audio: AudioSegment, 
+                            low_cut: int = 300, 
+                            high_cut: int = 3400, 
+                            order: int = 5) -> AudioSegment:
+            # 1. Normalización inicial para que el Gate sea preciso
+            audio = effects.normalize(audio)
+            
+            fs = audio.frame_rate
+            nyquist = 0.5 * fs
+            low = max(0.001, low_cut / nyquist)
+            high = min(0.999, high_cut / nyquist)
+            sos = signal.butter(order, [low, high], btype='band', output='sos')
+
+            samples = np.array(audio.get_array_of_samples()).astype(np.float32)
+            
+            if audio.channels > 1:
+                samples = samples.reshape((-1, audio.channels))
+                filtered = np.zeros_like(samples)
+                for i in range(audio.channels):
+                    filtered[:, i] = signal.sosfiltfilt(sos, samples[:, i])
+            else:
+                filtered = signal.sosfiltfilt(sos, samples)
+
+            # 2. HARD GATE: Si el sonido es ruido de fondo, lo llevamos a CERO absoluto
+            # Subimos el umbral al 5% para ser más drásticos con el siseo
+            noise_threshold = np.max(np.abs(filtered)) * 0.05 
+            filtered[np.abs(filtered) < noise_threshold] = 0 
+
+            max_val = float(2**(8 * audio.sample_width - 1))
+            filtered = np.clip(filtered, -max_val, max_val - 1).astype(np.int16)
+            processed_audio = audio._spawn(filtered.tobytes())
+
+            # 3. COMPRESIÓN DINÁMICA: Subimos el threshold a -15.0
+            # Esto evita que el compresor "busque" y amplifique el ruido de fondo
+            compressed = effects.compress_dynamic_range(
+                processed_audio, 
+                threshold=-15.0, 
+                ratio=2.5,       
+                attack=10.0, 
+                release=1000.0   
+            )
+            
+            return effects.normalize(compressed)
+
+    def remove_silence(self, audio: AudioSegment, 
+                min_silence_len: int = 1000,
+                silence_thresh_offset: int = -30, # Un poco más bajo para no cortar palabras
+                keep_silence: int = 300) -> Tuple[AudioSegment, float]:
+        """
+        Versión optimizada: No vuelve a normalizar el audio para evitar subir el siseo.
+        """
+        # Usamos el nivel de decibelios actual del audio ya procesado por el filtro
+        threshold = audio.dBFS + silence_thresh_offset
+
+        nonsilent_ranges = detect_nonsilent(
+            audio,
+            min_silence_len=min_silence_len,
+            silence_thresh=threshold
+        )
+        
+        if not nonsilent_ranges:
+            return audio, 0.0
+        
+        cleaned_audio = AudioSegment.empty()
+        duration_ms = len(audio)
+        
+        for start, end in nonsilent_ranges:
+            # Aumentamos el padding para evitar cortes abruptos (evita el efecto 'sh')
+            start_pad = max(0, start - keep_silence)
+            end_pad = min(duration_ms, end + keep_silence)
+            
+            chunk = audio[start_pad:end_pad]
+            
+            if len(cleaned_audio) > 0:
+                cleaned_audio = cleaned_audio.append(chunk, crossfade=100) # Crossfade más largo para suavidad
+            else:
+                cleaned_audio = chunk
+                
+        original_dur = len(audio)
+        cleaned_dur = len(cleaned_audio)
+        silence_pct = ((original_dur - cleaned_dur) / original_dur) * 100 if original_dur > 0 else 0
+        
+        return cleaned_audio, silence_pct
+    
+    def preprocess_audio(self, audio_path: str, output_path: str = None) -> dict:
+        """
+        Pipeline profesional de preprocesamiento de audio.
+        Optimiza la calidad para escucha humana o motores de transcripción (ASR).
+        """
+        start_time_proc = time.time()
+        logging.info(f"Iniciando procesamiento: {audio_path}")
+        
+        try:
+            # 1. Cargar audio
+            audio = self.load_audio(audio_path)
+            original_duration = len(audio) / 1000.0
+            
+            # --- ETAPA DE LIMPIEZA DE FRECUENCIAS ---
+            # Filtramos primero para que la detección de tonos y silencios 
+            # no se confunda con ruidos de baja o alta frecuencia (motores, siseos).
+            audio = self.apply_bandpass_filter(audio)
+            
+            # --- ETAPA DE ELIMINACIÓN DE SEGMENTOS ---
+            # A. Eliminar tonos de espera (Usando la versión híbrida música/tonos)
+            audio, hold_tone_segments = self.remove_hold_tones(audio)
+            hold_tone_duration = sum(end - start for start, end in hold_tone_segments)
+            
+            # B. Eliminar silencios (Usando la versión con normalización interna)
+            # Se hace después de quitar los tonos para no procesar silencios de la música de espera.
+            audio, silence_percentage = self.remove_silence(audio)
+            
+            
+            final_duration = len(audio) / 1000.0
+            
+            # Exportar para Whisper
+            self.export_for_whisper(audio, str(temp_path))
+            # Guardar resultado
+            #if output_path:
+            #    # Aseguramos formato óptimo para análisis (16kHz, mono es estándar para IA)
+            #    audio.export(output_path, format="wav", parameters=["-ar", "16000", "-ac", "1"])
+            
+            # Métricas mejoradas
+            processing_time = time.time() - start_time_proc
+            metrics = {
+                "status": "success",
+                "original_duration_sec": round(original_duration, 2),
+                "final_duration_sec": round(final_duration, 2),
+                "hold_tones_detected": len(hold_tone_segments),
+                "hold_tone_duration_sec": round(hold_tone_duration, 2),
+                "silence_removed_pct": round(silence_percentage, 2),
+                "total_time_saved_sec": round(original_duration - final_duration, 2),
+                "efficiency_ratio_pct": round((1 - final_duration / original_duration) * 100, 2),
+                "processing_execution_time_sec": round(processing_time, 2)
+            }
+            
+            logging.info(f"Procesamiento finalizado en {processing_time:.2f}s")
+            return metrics
+
+        except Exception as e:
+            logging.error(f"Error procesando {audio_path}: {str(e)}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+
+    def export_for_whisper(self, audio: AudioSegment, output_path: str):
+        """
+        Exporta audio optimizado eliminando distorsiones y normalizando volumen.
+        """
+        try:
+            # 1. Estandarizar formato (16kHz, Mono, 16-bit)
+            audio = audio.set_frame_rate(16000)
+            audio = audio.set_channels(1)
+            audio = audio.set_sample_width(2) # Forzamos 16-bit (2 bytes)
+
+            # 2. PROTECCIÓN: Añadir 300ms de silencio al inicio y fin
+            # Esto ayuda a Whisper a no "comerse" la primera palabra y estabilizar el VAD.
+            padding = AudioSegment.silent(duration=300, frame_rate=16000)
+            audio = padding + audio + padding
+
+            # 3. Normalización Dinámica (Crucial para evitar el "No entiendo")
+            # Ajusta el audio para que la voz sea clara y el ruido de fondo sea despreciable.
+            audio = effects.normalize(audio, headroom=0.1)
+
+            # 4. Convertir a numpy detectando el ancho de muestra real
+            samples = np.array(audio.get_array_of_samples())
+            bit_depth = audio.sample_width * 8
+            max_val = float(2**(bit_depth - 1))
+            samples_float = samples.astype(np.float32) / max_val
+
+            # 5. ELIMINAR DC OFFSET (Quita el siseo eléctrico constante)
+            samples_float = samples_float - np.mean(samples_float)
+
+            # 6. Exportar con soundfile garantizando PCM_16
+            sf.write(output_path, samples_float, 16000, subtype='PCM_16')
+            
+            logging.info(f"Audio exportado y normalizado: {output_path}")
+
+        except Exception as e:
+            logging.error(f"Error en export_for_whisper: {e}")
+            raise

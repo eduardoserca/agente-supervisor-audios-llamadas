@@ -1,0 +1,63 @@
+# Archivos de entorno
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# Audio files (opcional - descomentar si no quieres versionar audios)
+# data/audios/*.wav
+# data/audios/*.mp3
+# data/audios/*.m4a
+
+# Output files
+output/transcriptions/*.json
+output/greeting_analysis/*.json
+output/*.csv
+output/*.html
+output/temp_*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Models cache
+models/

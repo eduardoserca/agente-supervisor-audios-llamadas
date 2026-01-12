@@ -1,0 +1,83 @@
+{
+  "version": "1.6.4",
+  "criterio": "Gestión del Requerimiento",
+  "definiciones": {
+    "checklist_validacion_obligatoria": [
+      "nombre",
+      "dni",
+      "fecha_nacimiento",
+      "lugar_nacimiento",
+      "monto_facturado",
+      "codigo_o_id_servicio(opcional_segun_caso)"
+    ],
+    "canales_alternos_permitidos_monto": [
+      "app_oficial",
+      "pdf_correo",
+      "sms",
+      "whatsapp_oficial"
+    ],
+    "umbral_evaluacion_minima": "Se considera que hay información suficiente para evaluar (evaluacion_minima_cumplida = true) cuando el asesor logra: (1) identificación básica (nombre + DNI) y (2) determina claramente la intención del cliente (p. ej., solicita BAJA, consulta, reclamo) y (3) al menos una de las reglas R1–R8 puede ser evaluada con evidencia del diálogo."
+  },
+  "marcadores_auditoria": {
+    "resultado_validacion": "validado | no_validado_por_cliente | no_validado_por_asesor",
+    "causa_interrupcion": "cliente | asesor | sistema | ninguna",
+    "evaluacion_minima_cumplida": false,
+    "evidencias_solicitadas": {
+      "pidio_todos_los_campos": false,
+      "ofrecio_canal_alterno_para_monto": false,
+      "documento_que_falto": "monto_facturado | otro | ninguno"
+    }
+  },
+  "reglas": {
+    "R1_validacion_datos": "La validación de identidad tiene dos fases: (a) Identificación inicial básica al inicio de la llamada (p.ej., nombre y DNI) para encaminar la atención; (b) Validación completa (nombre, DNI, fecha de nacimiento, lugar de nacimiento, último monto facturado y, de corresponder, código/ID de servicio) OBLIGATORIA SOLO CUANDO el cliente solicita explícitamente la BAJA u otra gestión sensible (p.ej., cambio de titular, reconexión). Si el cliente NO solicita explícitamente la baja (p.ej., solo consulta o solicita facilidades), la falta de validación completa NO penaliza al asesor: CUMPLE si realiza la identificación básica adecuada. Si el cliente sí solicita la baja y el asesor NO pide todos los datos completos, es NO CUMPLE. Si el asesor solicita correctamente la validación completa pero el cliente no brinda/recuerda los datos, el asesor CUMPLE en R1 y la conversación puede calificarse NO APLICA si no avanza por causa del cliente.",
+    "R1A_nota_caso_interrupcion_cliente": "Si la conversación se interrumpe por causa del CLIENTE antes de completar la validación, y el asesor aplicó correctamente el protocolo (pidió todo y ofreció canal alterno para monto cuando corresponda): (i) si evaluacion_minima_cumplida = false → R1 = CUMPLE y resultado global = NO APLICA; (ii) si evaluacion_minima_cumplida = true → R1 = CUMPLE y se calcula resultado global normalmente (con ponderaciones).",
+    "R2_empatia_claridad": "El asesor debe mantener una comunicación empática, clara, sin confrontación y orientada a la solución. Debe disculparse ante demoras, mostrar cortesía y evitar interrupciones. Si no demuestra empatía o se percibe tono de molestia o evasión, es NO CUMPLE.",
+    "R3_ofertas_adecuadas": "Si el cliente expresa explícitamente su deseo de darse de baja, el asesor puede ofrecer hasta tres (≤3) alternativas de retención (ajuste, descuento, suspensión, cambio de plan). Superar tres intentos o insistir reiteradamente implica NO CUMPLE. Si el cliente no manifiesta deseo de baja y solo plantea una consulta o dificultad económica, el asesor NO debe ofrecer retenciones ni beneficios; en ese caso, se considera CUMPLE al mantener la conversación dentro del contexto correcto.",
+    "R4_respeto_decision": "El asesor debe respetar la decisión del cliente una vez agotadas las alternativas permitidas o cuando el cliente reitera su solicitud de baja. Insistir nuevamente después de tres intentos implica NO CUMPLE.",
+    "R5_formalizacion_cierre": "El asesor debe formalizar la gestión (ya sea baja, ajuste o beneficio) indicando pasos, plazos y código de atención. **Si la conversación NO culmina por causas atribuibles al CLIENTE** (corta la llamada, no solicita explícitamente la baja, no supera la validación, no desea continuar, etc.), **R5 se califica como NO APLICA** y **no debe afectar el desempeño del asesor**.",
+    "R6_resolver_consulta_asociada": "El asesor debe resolver cualquier tema directamente relacionado con la solicitud (por ejemplo, entregar código de atención, confirmar estado de baja, explicar monto pendiente). **Si la conversación no continúa por causas del CLIENTE** (corte, negativa a seguir, falta de validación, no solicita explícitamente la baja, etc.), **R6 se califica como NO APLICA** y **no penaliza al asesor**. Solo se califica NO CUMPLE cuando había información y continuidad suficientes y, aun así, el asesor evita/omite resolver.",
+    "R6A_consulta_baja_previa": "Si el cliente contacta para solicitar información o código asociado a una BAJA ya generada en una gestión anterior, el asesor está OBLIGADO a brindar el código de baja, confirmar el estado del servicio y orientar al cliente sobre el seguimiento. **Omitir esta información, derivar sin solución o responder que 'no se visualiza' sin escalar ni asistir equivale a NO CUMPLE.** Esta omisión constituye falta grave bajo el criterio de Gestión del Requerimiento, incluso si la baja no fue generada por el propio asesor.",
+    "R7_tiempo_espera_justificado": "El tiempo en espera o 'on hold' debe ser razonable y justificado (por validación o registro de solicitud). Si el asesor usa el tiempo de espera excesivamente o sin motivo para dilatar, evitar la baja o cansar al cliente, se considera NO CUMPLE. Si producto de la espera excesiva el cliente se ofusca o corta, también es NO CUMPLE.",
+    "R8_regla_rebatimientos": "Máximo tres rebatimientos consecutivos (≤3) están permitidos. Si el asesor supera ese límite o insiste luego de tres negativas del cliente, el resultado será NO CUMPLE, incluso si cumple las demás condiciones. **Aclaraciones para el conteo:** (a) preguntas exploratorias o de confirmación (p. ej., '¿con qué operador?') NO se contabilizan como rebatimiento; (b) un **resumen o mención informativa en el cierre** sobre beneficios previamente aceptados u otorgados (p. ej., recapitular un ajuste/descuento ya aplicado) **NO se considera rebatimiento**; solo cuenta como rebatimiento si, en el cierre, el asesor introduce una **nueva** alternativa de retención o vuelve a presionar para que el cliente no cancele.",
+    "R9_falta_informacion": "Si no se puede realizar la auditoría porque el cliente no brinda datos, corta la llamada o no se logra validar información suficiente, el resultado global será NO APLICA, siempre que la responsabilidad no recaiga en el asesor. **Excepción:** si evaluacion_minima_cumplida = true, se calculará el resultado global normalmente (con ponderaciones), aunque la llamada termine por causa del cliente."
+  },
+  "reglas_de_consistencia": {
+    "si_resultado_validacion_es_no_validado_por_cliente": {
+      "requisitos_para_aplicar": [
+        "marcadores_auditoria.evidencias_solicitadas.pidio_todos_los_campos = true",
+        "marcadores_auditoria.evidencias_solicitadas.ofrecio_canal_alterno_para_monto = true"
+      ],
+      "entonces": {
+        "R1_validacion_datos": "CUMPLE",
+        "R5_formalizacion_cierre": "NO APLICA",
+        "R6_resolver_consulta_asociada": "NO APLICA",
+        "estado_gestion": "INTERRUMPIDA",
+        "responsabilidad_no_cierre": "CLIENTE",
+        "motivo_no_cierre": "Cliente no dispone/valida el dato obligatorio",
+        "resultado_global": "NO APLICA",
+        "aplicar_ponderaciones": false,
+        "override_si_evaluacion_minima_cumplida": "Si marcadores_auditoria.evaluacion_minima_cumplida = true, ignorar 'resultado_global = NO APLICA' y proceder con cálculo normal de ponderaciones."
+      }
+    },
+    "si_resultado_validacion_es_no_validado_por_asesor": {
+      "entonces": {
+        "R1_validacion_datos": "NO CUMPLE",
+        "responsabilidad_no_cierre": "ASESOR",
+        "motivo_no_cierre": "Omisión o conducción incorrecta de la validación"
+      }
+    }
+  },
+  "ponderaciones": {
+    "R1_validacion_datos": 0.15,
+    "R1A_nota_caso_interrupcion_cliente": 0.05,
+    "R2_empatia_claridad": 0.15,
+    "R3_ofertas_adecuadas": 0.10,
+    "R4_respeto_decision": 0.15,
+    "R5_formalizacion_cierre": 0.15,
+    "R6_resolver_consulta_asociada": 0.05,
+    "R6A_consulta_baja_previa": 0.10,
+    "R7_tiempo_espera_justificado": 0.05,
+    "R8_regla_rebatimientos": 0.05
+  },
+  "criterio_global": "El desempeño del asesor se considera CUMPLE si mantiene empatía, claridad y respeto, realiza la validación correcta y gestiona la solicitud conforme a las reglas. Cuando el cliente contacta por una BAJA previa (p. ej., para obtener el código de baja o verificar estado), el asesor tiene la obligación de atender la solicitud y entregar la información correspondiente, incluso si la baja fue gestionada en otra llamada. Omitir esta atención o derivar sin solución constituye NO CUMPLE bajo la regla R6A_consulta_baja_previa."
+}
